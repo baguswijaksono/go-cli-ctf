@@ -43,6 +43,36 @@ func promptUsername() string {
 	return username
 }
 
+func changeUsername(client *mongo.Client, macAddr string) error {
+	collection := client.Database("goctf").Collection("users")
+	ctx := context.Background()
+
+	var user User
+	err := collection.FindOne(ctx, bson.M{"mac_address": macAddr}).Decode(&user)
+	if err != nil {
+		return fmt.Errorf("error finding user: %v", err)
+	}
+
+	var newUsername string
+	fmt.Printf("Current username: %s\n", user.Username)
+	fmt.Print("Enter new username: ")
+	_, _ = fmt.Scan(&newUsername)
+
+	update := bson.M{
+		"$set": bson.M{
+			"username": newUsername,
+		},
+	}
+
+	_, err = collection.UpdateOne(ctx, bson.M{"mac_address": macAddr}, update)
+	if err != nil {
+		return fmt.Errorf("error updating username: %v", err)
+	}
+
+	fmt.Println("Username updated successfully!")
+	return nil
+}
+
 func addUser(client *mongo.Client, username, macAddr string) error {
 	collection := client.Database("goctf").Collection("users")
 	ctx := context.Background()
@@ -220,6 +250,7 @@ func main() {
 		fmt.Println("1. Attempt a challenge")
 		fmt.Println("2. Show leaderboard")
 		fmt.Println("3. Exit")
+		fmt.Println("3. Change Username")
 
 		var option int
 		fmt.Print("Enter your choice: ")
@@ -255,8 +286,6 @@ func main() {
 			}
 
 			if hasCompleted {
-				fmt.Println("You have already completed this challenge.")
-				// You might want to display additional information or handle the case differently
 				continue
 			}
 
@@ -292,7 +321,6 @@ func main() {
 				fmt.Println("Correct answer recorded successfully!")
 			} else {
 				fmt.Println("Incorrect flag. Try again!")
-				// Allow user to retry or display additional information
 			}
 
 		case 2:
@@ -304,6 +332,12 @@ func main() {
 		case 3:
 			fmt.Println("Exiting the program.")
 			return
+
+		case 4:
+			err := changeUsername(client, macAddr)
+			if err != nil {
+				fmt.Println("Error changing username:", err)
+			}
 
 		default:
 			fmt.Println("Invalid option. Please select a valid option.")
