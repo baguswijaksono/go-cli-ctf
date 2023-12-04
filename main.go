@@ -136,6 +136,23 @@ func getChallenges(client *mongo.Client) ([]Challenge, error) {
 	return challenges, nil
 }
 
+func hasCompletedChallenge(client *mongo.Client, macAddr, challengeName string) (bool, error) {
+	collection := client.Database("goctf").Collection("correctanswers")
+	ctx := context.Background()
+
+	filter := bson.M{
+		"mac_address":    macAddr,
+		"challenge_name": challengeName,
+	}
+
+	count, err := collection.CountDocuments(ctx, filter)
+	if err != nil {
+		return false, fmt.Errorf("error checking completed challenge: %v", err)
+	}
+
+	return count > 0, nil
+}
+
 func displayChallenges(challenges []Challenge) {
 	fmt.Println("Available Challenges:")
 	for i, challenge := range challenges {
@@ -230,6 +247,18 @@ func main() {
 			}
 
 			selectedChallenge := challenges[choice-1]
+
+			hasCompleted, err := hasCompletedChallenge(client, macAddr, selectedChallenge.Name)
+			if err != nil {
+				fmt.Println("Error checking completed challenge:", err)
+				continue
+			}
+
+			if hasCompleted {
+				fmt.Println("You have already completed this challenge.")
+				// You might want to display additional information or handle the case differently
+				continue
+			}
 
 			fmt.Println("You selected:", selectedChallenge.Name)
 			fmt.Println("Description:", selectedChallenge.Description)
