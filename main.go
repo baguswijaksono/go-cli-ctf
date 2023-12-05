@@ -18,6 +18,91 @@ type Challenge struct {
 	Point       int    `bson:"point"`
 }
 
+func getChallengeSuccessPercentage(client *mongo.Client, challengeName string) (float64, error) {
+	collection := client.Database("goctf").Collection("correctanswers")
+	ctx := context.Background()
+
+	filter := bson.M{
+		"challenge_name": challengeName,
+	}
+
+	totalAttempts, err := collection.CountDocuments(ctx, filter)
+	if err != nil {
+		return 0, fmt.Errorf("error counting total attempts for challenge: %v", err)
+	}
+
+	if totalAttempts == 0 {
+		return 0, nil // No attempts, success percentage is 0
+	}
+
+	filter["points"] = bson.M{"$gt": 0} // Consider only successful attempts
+	successfulAttempts, err := collection.CountDocuments(ctx, filter)
+	if err != nil {
+		return 0, fmt.Errorf("error counting successful attempts for challenge: %v", err)
+	}
+
+	successPercentage := float64(successfulAttempts) / float64(totalAttempts) * 100
+	return successPercentage, nil
+}
+
+func categorizeDifficulty(successPercentage float64) string {
+	if successPercentage > 50 {
+		return "Easy"
+	} else if successPercentage > 25 {
+		return "Medium"
+	} else {
+		return "Hard"
+	}
+}
+
+func displayChallengesWithDifficulty(client *mongo.Client) error {
+	challenges, err := getChallenges(client)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("Available Challenges with Difficulty:")
+	for _, challenge := range challenges {
+		successPercentage, err := getChallengeSuccessPercentage(client, challenge.Name)
+		if err != nil {
+			fmt.Printf("- %s: Difficulty calculation error\n", challenge.Name)
+			continue
+		}
+
+		difficulty := categorizeDifficulty(successPercentage)
+		fmt.Printf("- %s: %s (Success Percentage: %.2f%%)\n", challenge.Name, difficulty, successPercentage)
+	}
+
+	return nil
+}
+
+func recordAttempt(client *mongo.Client, macAddr, challengeName string, points int, successful bool) error {
+	collection := client.Database("goctf").Collection("attempts")
+	ctx := context.Background()
+
+	data := bson.D{
+		{Key: "mac_address", Value: macAddr},
+		{Key: "challenge_name", Value: challengeName},
+		{Key: "points", Value: points},
+		{Key: "successful", Value: successful},
+	}
+
+	_, err := collection.InsertOne(ctx, data)
+	if err != nil {
+		return fmt.Errorf("error recording attempt: %v", err)
+	}
+	return nil
+}
+
+func recordIncorrectAnswer(client *mongo.Client, macAddr, challengeName string) error {
+	// Assuming points for incorrect answers are 0
+	err := recordAttempt(client, macAddr, challengeName, 0, false)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 type User struct {
 	Username   string `bson:"username"`
 	MACAddress string `bson:"mac_address"`
@@ -35,14 +120,41 @@ func findUserByMAC(client *mongo.Client, macAddr string) (User, error) {
 
 	return user, nil
 }
+func showUserSolvedChallenges(client *mongo.Client, macAddr string) error {
+	collection := client.Database("goctf").Collection("correctanswers")
+	ctx := context.Background()
+
+	filter := bson.M{
+		"mac_address": macAddr,
+	}
+
+	cursor, err := collection.Find(ctx, filter)
+	if err != nil {
+		return fmt.Errorf("error retrieving solved challenges: %v", err)
+	}
+	defer cursor.Close(ctx)
+
+	fmt.Println("Solved Challenges:")
+	for cursor.Next(ctx) {
+		var result bson.M
+		err := cursor.Decode(&result)
+		if err != nil {
+			return fmt.Errorf("error decoding result: %v", err)
+		}
+		fmt.Printf("- %s, Points Earned: %d\n", result["challenge_name"], result["points"])
+	}
+
+	return nil
+}
 
 func displayHelp() {
 	fmt.Println("Available commands:")
-	fmt.Println("- play: View available challenges and attempt a challenge.")
-	fmt.Println("- slb: Display the leaderboard.")
-	fmt.Println("- cn: Change your username.")
-	fmt.Println("- reset: Reset your points.")
-	fmt.Println("- exit: Exit the program.")
+	fmt.Println("play: View available challenges and attempt a challenge.")
+	fmt.Println("slb: Display the leaderboard.")
+	fmt.Println("solve: Displays successfully answered challenges by yourself.")
+	fmt.Println("cn: Change your username.")
+	fmt.Println("reset: Reset your points.")
+	fmt.Println("exit: Exit the program.")
 }
 
 func promptUsername() string {
@@ -322,7 +434,7 @@ func main() {
 			}
 
 			if hasCompleted {
-				fmt.Println("you already solved this challenge")
+				fmt.Println("You already solved this challenge")
 				continue
 			}
 
@@ -335,21 +447,6 @@ func main() {
 
 			if userAnswer == selectedChallenge.Flag {
 				pointsEarned := selectedChallenge.Point
-
-				interfaces, err := net.Interfaces()
-				if err != nil {
-					fmt.Println("Error:", err)
-					continue
-				}
-				var macAddr string
-				for _, inter := range interfaces {
-					mac := inter.HardwareAddr
-					if mac != nil {
-						macAddr = mac.String()
-						break
-					}
-				}
-
 				err = recordCorrectAnswer(client, macAddr, selectedChallenge.Name, pointsEarned)
 				if err != nil {
 					fmt.Println("Error recording correct answer:", err)
@@ -357,6 +454,11 @@ func main() {
 				}
 				fmt.Println("Correct answer recorded successfully!")
 			} else {
+				err = recordIncorrectAnswer(client, macAddr, selectedChallenge.Name)
+				if err != nil {
+					fmt.Println("Error recording incorrect answer:", err)
+					continue
+				}
 				fmt.Println("Incorrect flag. Try again!")
 			}
 
@@ -390,6 +492,18 @@ func main() {
 
 		case "help":
 			displayHelp()
+
+		case "sd":
+			err := displayChallengesWithDifficulty(client)
+			if err != nil {
+				fmt.Println("Error displaying challenges with difficulty:", err)
+			}
+
+		case "solve":
+			err := showUserSolvedChallenges(client, macAddr)
+			if err != nil {
+				fmt.Println("Error displaying solved challenges:", err)
+			}
 
 		default:
 			fmt.Println("Invalid option. Please select a valid option.")
