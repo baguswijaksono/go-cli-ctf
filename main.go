@@ -23,56 +23,6 @@ type User struct {
 	MACAddress string `bson:"mac_address"`
 }
 
-func displayASCIIName() {
-	fmt.Println(`
-	
-	.d8888b.   .d88888b.   .d8888b. 88888888888 8888888888 
-	d88P  Y88b d88P" "Y88b d88P  Y88b    888     888        
-	888    888 888     888 888    888    888     888        
-	888        888     888 888           888     8888888    
-	888  88888 888     888 888           888     888        
-	888    888 888     888 888    888    888     888        
-	Y88b  d88P Y88b. .d88P Y88b  d88P    888     888        
-	 "Y8888P88  "Y88888P"   "Y8888P"     888     888        
-    `)
-}
-
-func displayASCIIArt() {
-	fmt.Print(`                                               
-                                     .......                                    
-                            :=+*######****###%#*+=:                             
-                        -+#%*+=-:::::::::::::::-=+#%#=:                         
-                     -*%#+-:::--::::::::::::::::::::-*%%+.                      
-                   =%%+-:::::*+:::::::::::::::::::::--:-+%#-                    
-                 +%#=::::::-#=::::::::::::::::::#=...:-...-#%-                  
-               =@#=:::::::=%=.....+:............+#.   .*+. .-##:                
-             .#%+::::::::-%+.:=...#-........... =%-.   :*#:  .=%+               
-            .%%=-::::::::##-.*+..:%=.........*. :%%+.   :*%:..:=%*              
-            %%=+-----:::*%=::%=..:%=.........#: -%+#*:.:=%%%=---=#*             
-           +@+##-------=@*=-*@=::+@+:+:....:-%-:+%--##=--%@@#----=*%*:          
-           @%#%=-------*%+=#%@=-=%@%*%-:::::+%+#%%=--%#=-#%@@+----==+#%+-.      
-          :@@%=--------%#=##=%##@@@=*#:::::-#*:+@*++=-##=##=@#----+%+==+*#%#**= 
-        :+%%*==-------=@**%-:***##%=%=:::::+#--**.    .#%%+:*%=----*@%%%%%%%#+: 
-   =*#%@%#+=*%*-------+@#%=..:+=:-********+*++=-::-:  .:%#-:=%=----=%#@-        
-   -#%@@@@@##@=-------*@%+:...                 .::-=*%@%*=: -%=---::*##%        
-         =@=*%--------*@#=+*#%%%%#*+-.        .=#@@%*=:..   :%=-::::+%+@=       
-         +%=*%:::-----*@+    .:-+*#*+:        .--=++++***+- :#=---::-@+%%       
-         +%=*%-:::-:::*%.:=+##*+-:    :----=--:.     ........+#=--::-@+#@       
-         =@=+@=:::-:::+%::-:...      *%*****++%=    ...::.::..*#--::-@+#@       
-         :@*=%*:::--::=@=...:.:..    *#-:::::=%:    .........:##=-::+@+%%       
-          %#=%%-::-*=::%*...:....    +#-:::::+#.      .....-*%*=+-::#%*@=       
-          -@*%@#::-+%=:*%=.....      -#-::::-*=        :-*%%@+-*@-:=@@@*        
-           =@@@@*::=+%+-%@%#=-..     .*=::::=+. .:-=+#%%*=.:@*+%@=-%#-:         
-            .-.+@*:-=+@#*@=:=+*#%##***%#*###%%#%##*=-:     -@#%@@*%#.           
-                :%%+==%@@@@:      ...:::::....             -%#-*@#=             
-                  +%%+*@::+*                                   ..               
-                    =#@@=                                                       
-                       .                                                        
-                                                                                
-										
-    `)
-}
-
 func findUserByMAC(client *mongo.Client, macAddr string) (User, error) {
 	collection := client.Database("goctf").Collection("users")
 	ctx := context.Background()
@@ -84,6 +34,15 @@ func findUserByMAC(client *mongo.Client, macAddr string) (User, error) {
 	}
 
 	return user, nil
+}
+
+func displayHelp() {
+	fmt.Println("Available commands:")
+	fmt.Println("- play: View available challenges and attempt a challenge.")
+	fmt.Println("- slb: Display the leaderboard.")
+	fmt.Println("- cn: Change your username.")
+	fmt.Println("- reset: Reset your points.")
+	fmt.Println("- exit: Exit the program.")
 }
 
 func promptUsername() string {
@@ -104,7 +63,6 @@ func changeUsername(client *mongo.Client, macAddr string) error {
 	}
 
 	var newUsername string
-	fmt.Printf("Current username: %s\n", user.Username)
 	fmt.Print("Enter new username: ")
 	_, _ = fmt.Scan(&newUsername)
 
@@ -257,9 +215,43 @@ func recordCorrectAnswer(client *mongo.Client, macAddr, challengeName string, po
 	return nil
 }
 
+func confirmAction() bool {
+	var confirmation string
+	fmt.Print("Are you sure you want to reset your points? (y/n): ")
+	_, _ = fmt.Scan(&confirmation)
+	return confirmation == "y" || confirmation == "Y"
+}
+
+func resetPoints(client *mongo.Client, macAddr string) error {
+	collection := client.Database("goctf").Collection("correctanswers")
+	ctx := context.Background()
+
+	filter := bson.M{
+		"mac_address": macAddr,
+	}
+
+	// Delete all records where the MAC address matches
+	_, err := collection.DeleteMany(ctx, filter)
+	if err != nil {
+		return fmt.Errorf("error deleting records: %v", err)
+	}
+
+	// Update points for the user to 0
+	update := bson.M{
+		"$set": bson.M{
+			"points": 0,
+		},
+	}
+
+	_, err = collection.UpdateMany(ctx, filter, update)
+	if err != nil {
+		return fmt.Errorf("error resetting points: %v", err)
+	}
+
+	return nil
+}
+
 func main() {
-	displayASCIIArt()
-	displayASCIIName()
 	client, err := connectDB()
 	if err != nil {
 		log.Fatal(err)
@@ -293,27 +285,19 @@ func main() {
 				continue
 			}
 
-			fmt.Println("Successfully Join!")
-		} else {
-			fmt.Println("Welcome back,", user.Username)
+			fmt.Println("Successfully Join!", user.Username)
 		}
 
-		fmt.Println("Choose an option:")
-		fmt.Println("1. Attempt a challenge")
-		fmt.Println("2. Show leaderboard")
-		fmt.Println("3. Exit")
-		fmt.Println("3. Change Username")
-
-		var option int
-		fmt.Print("Enter your choice: ")
+		var option string
+		fmt.Print("goctfcli@", user.Username, " : ")
 		_, err = fmt.Scan(&option)
 		if err != nil {
-			fmt.Println("Invalid choice. Please enter a valid option.")
+			fmt.Println("Please use command help to show command.")
 			continue
 		}
 
 		switch option {
-		case 1:
+		case "play":
 			challenges, err := getChallenges(client)
 			if err != nil {
 				log.Fatal(err)
@@ -338,6 +322,7 @@ func main() {
 			}
 
 			if hasCompleted {
+				fmt.Println("you already solved this challenge")
 				continue
 			}
 
@@ -375,21 +360,36 @@ func main() {
 				fmt.Println("Incorrect flag. Try again!")
 			}
 
-		case 2:
+		case "slb":
 			err = showLeaderboard(client)
 			if err != nil {
 				fmt.Println("Error displaying leaderboard:", err)
 			}
 
-		case 3:
+		case "exit":
 			fmt.Println("Exiting the program.")
 			return
 
-		case 4:
+		case "cn":
 			err := changeUsername(client, macAddr)
 			if err != nil {
 				fmt.Println("Error changing username:", err)
 			}
+
+		case "reset":
+			if confirmAction() {
+				err := resetPoints(client, macAddr)
+				if err != nil {
+					fmt.Println("Error resetting points:", err)
+				} else {
+					fmt.Println("Points reset successfully!")
+				}
+			} else {
+				fmt.Println("Points reset canceled.")
+			}
+
+		case "help":
+			displayHelp()
 
 		default:
 			fmt.Println("Invalid option. Please select a valid option.")
